@@ -19,15 +19,15 @@ func (c VideoCodec) Args() []string {
 
 var (
 	// Software codec's
-	VideoCodecLibX264 = makeVideoCodec("x264", "libx264")
-	VideoCodecLibWebP = makeVideoCodec("WebP", "libwebp")
-	VideoCodecBMP     = makeVideoCodec("BMP", "bmp")
-	VideoCodecMJpeg   = makeVideoCodec("Jpeg", "mjpeg")
-	VideoCodecVP9     = makeVideoCodec("VPX-VP9", "libvpx-vp9")
-	VideoCodecVPX     = makeVideoCodec("VPX-VP8", "libvpx")
-	VideoCodecLibX265 = makeVideoCodec("x265", "libx265")
+	VideoCodecLibX264   = makeVideoCodec("x264", "libx264")
+	VideoCodecLibWebP   = makeVideoCodec("WebP", "libwebp")
+	VideoCodecBMP       = makeVideoCodec("BMP", "bmp")
+	VideoCodecMJpeg     = makeVideoCodec("Jpeg", "mjpeg")
+	VideoCodecVP9       = makeVideoCodec("VPX-VP9", "libvpx-vp9")
+	VideoCodecVPX       = makeVideoCodec("VPX-VP8", "libvpx")
+	VideoCodecLibX265   = makeVideoCodec("x265", "libx265")
 	VideoCodecLibSvtAv1 = makeVideoCodec("AV1", "libsvtav1")
-	VideoCodecCopy    = makeVideoCodec("Copy", "copy")
+	VideoCodecCopy      = makeVideoCodec("Copy", "copy")
 )
 
 type AudioCodec string

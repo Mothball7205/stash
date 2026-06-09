@@ -199,8 +199,8 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 				Path:     videoFile.Path,
 				Basename: filepath.Base(videoFile.Path),
 			},
-			Width:    videoFile.Width,
-			Height:   videoFile.Height,
+			Width:  videoFile.Width,
+			Height: videoFile.Height,
 		}
 		if g.Encoder.HWCanFullHWTranscode(ctx, *hwCodec, mvf, spriteSize) {
 			useHW = true
@@ -220,18 +220,18 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 				Path:     videoFile.Path,
 				Basename: filepath.Base(videoFile.Path),
 			},
-			Width:    videoFile.Width,
-			Height:   videoFile.Height,
+			Width:  videoFile.Width,
+			Height: videoFile.Height,
 		}
 		vf = g.Encoder.HWCodecFilter(vf, *hwCodec, mvf, true)
-		
+
 		switch *hwCodec {
 		case ffmpeg.VideoCodecN264, ffmpeg.VideoCodecN264H, ffmpeg.VideoCodecNAv1:
 			vf = vf.Append("hwdownload,format=yuv420p")
 		default:
 			vf = vf.Append("hwdownload,format=nv12")
 		}
-		
+
 		vf = vf.Append(fmt.Sprintf("tile=%dx%d", gridSize, gridSize))
 	} else {
 		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(w, h)
@@ -253,7 +253,7 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 		runArgs := make(ffmpeg.Args, len(args))
 		copy(runArgs, args)
 		runArgs[len(runArgs)-1] = tmpFn
-		
+
 		return g.generate(lCtx, runArgs)
 	})
 }

@@ -140,14 +140,14 @@ func generateSpriteSingleProcess(encoder *ffmpeg.FFMpeg, videoFile *models.Video
 	if useHWTranscode {
 		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(screenshotSize, -2)
 		vf = encoder.HWCodecFilter(vf, *hwCodec, videoFile, true)
-		
+
 		switch *hwCodec {
 		case ffmpeg.VideoCodecN264, ffmpeg.VideoCodecN264H, ffmpeg.VideoCodecNAv1:
 			vf = vf.Append("hwdownload,format=yuv420p")
 		default:
 			vf = vf.Append("hwdownload,format=nv12")
 		}
-		
+
 		vf = vf.Append(fmt.Sprintf("tile=%dx%d", columns, rows))
 	} else {
 		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(screenshotSize, -2)
