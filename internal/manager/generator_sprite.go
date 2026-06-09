@@ -198,49 +198,8 @@ func (g *SpriteGenerator) generateSpriteImage() error {
 		return nil
 	}
 
-	var images []image.Image
-
 	isPortrait := g.Info.VideoFile.Height > g.Info.VideoFile.Width
-
-	if !g.SlowSeek {
-		logger.Infof("[generator] generating sprite image for %s", g.Info.VideoFile.Path)
-		// generate `ChunkCount` thumbnails
-		stepSize := g.Info.VideoFile.VideoStreamDuration / float64(g.Info.ChunkCount)
-
-		for i := 0; i < g.Info.ChunkCount; i++ {
-			time := float64(i) * stepSize
-			img, err := g.g.SpriteScreenshot(context.TODO(), g.Info.VideoFile.Path, time, g.Config.SpriteSize, isPortrait)
-			if err != nil {
-				return err
-			}
-			images = append(images, img)
-		}
-	} else {
-		logger.Infof("[generator] generating sprite image for %s (%d frames)", g.Info.VideoFile.Path, g.Info.VideoFile.FrameCount)
-
-		stepFrame := float64(g.Info.VideoFile.FrameCount-1) / float64(g.Info.ChunkCount)
-
-		for i := 0; i < g.Info.ChunkCount; i++ {
-			// generate exactly `ChunkCount` thumbnails, using duplicate frames if needed
-			frame := math.Round(float64(i) * stepFrame)
-			if frame >= math.MaxInt || frame <= math.MinInt {
-				return errors.New("invalid frame number conversion")
-			}
-
-			img, err := g.g.SpriteScreenshotSlow(context.TODO(), g.Info.VideoFile.Path, int(frame), g.Config.SpriteSize)
-			if err != nil {
-				return err
-			}
-			images = append(images, img)
-		}
-
-	}
-
-	if len(images) == 0 {
-		return fmt.Errorf("images slice is empty, failed to generate sprite images for %s", g.Info.VideoFile.Path)
-	}
-
-	return imaging.Save(g.g.CombineSpriteImages(images), g.ImageOutputPath)
+	return g.g.GenerateSpriteImage(context.TODO(), &g.Info.VideoFile, g.Info.ChunkCount, g.Config.SpriteSize, isPortrait, g.SlowSeek, g.ImageOutputPath)
 }
 
 func (g *SpriteGenerator) generateSpriteVTT() error {

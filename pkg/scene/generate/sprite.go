@@ -16,6 +16,7 @@ import (
 	"github.com/stashapp/stash/pkg/ffmpeg/transcoder"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
+	"github.com/stashapp/stash/pkg/models"
 	"github.com/stashapp/stash/pkg/utils"
 )
 
@@ -137,6 +138,148 @@ func (g Generator) spriteVTT(spritePath string, stepSize float64, spriteChunks i
 
 		return os.WriteFile(tmpFn, []byte(vtt), 0644)
 	}
+}
+
+func (g Generator) GenerateSpriteImage(ctx context.Context, videoFile *ffmpeg.VideoFile, chunkCount int, spriteSize int, isPortrait bool, slowSeek bool, outputPath string) error {
+	if videoFile.FrameCount > int64(chunkCount) && !slowSeek {
+		logger.Infof("[generator] attempting single-process sprite generation for %s", videoFile.Path)
+		err := g.generateSpriteImageSingleProcess(ctx, videoFile, chunkCount, spriteSize, isPortrait, outputPath)
+		if err == nil {
+			return nil
+		}
+		logger.Warnf("[generator] single-process sprite generation failed, falling back to slow loop: %v", err)
+	}
+
+	return g.GenerateSpriteImageFallback(ctx, videoFile, chunkCount, spriteSize, isPortrait, slowSeek, outputPath)
+}
+
+func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFile *ffmpeg.VideoFile, chunkCount int, spriteSize int, isPortrait bool, outputPath string) error {
+	var frames []int
+	stepSize := videoFile.VideoStreamDuration / float64(chunkCount)
+	for i := 0; i < chunkCount; i++ {
+		timeVal := float64(i) * stepSize
+		frame := int(math.Round(timeVal * videoFile.FrameRate))
+		if frame >= int(videoFile.FrameCount) {
+			frame = int(videoFile.FrameCount) - 1
+		}
+		if frame < 0 {
+			frame = 0
+		}
+		frames = append(frames, frame)
+	}
+
+	selectParts := make([]string, len(frames))
+	for idx, fNum := range frames {
+		selectParts[idx] = fmt.Sprintf("eq(n\\,%d)", fNum)
+	}
+	selectExpr := strings.Join(selectParts, "+")
+
+	var args ffmpeg.Args
+	args = args.LogLevel(ffmpeg.LogLevelError)
+	args = args.Overwrite()
+
+	var hwCodec *ffmpeg.VideoCodec
+	if g.FFMpegConfig.GetTranscodeHardwareAcceleration() {
+		hwCodec = g.Encoder.hwCodecMP4Compatible()
+	}
+
+	var w, h int
+	if !isPortrait {
+		w = spriteSize
+		h = -2
+	} else {
+		w = -2
+		h = spriteSize
+	}
+
+	useHW := false
+	if hwCodec != nil {
+		mvf := &models.VideoFile{
+			Path:     videoFile.Path,
+			Width:    videoFile.Width,
+			Height:   videoFile.Height,
+			Basename: filepath.Base(videoFile.Path),
+		}
+		if g.Encoder.hwCanFullHWTranscode(ctx, *hwCodec, mvf, spriteSize) {
+			useHW = true
+			args = g.Encoder.hwDeviceInit(args, *hwCodec, true)
+		}
+	}
+
+	args = args.Input(videoFile.Path)
+	args = args.VideoFrames(1)
+
+	gridSize := GetSpriteGridSize(chunkCount)
+	var vf ffmpeg.VideoFilter
+	if useHW {
+		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(w, h)
+		mvf := &models.VideoFile{
+			Path:     videoFile.Path,
+			Width:    videoFile.Width,
+			Height:   videoFile.Height,
+			Basename: filepath.Base(videoFile.Path),
+		}
+		vf = g.Encoder.hwCodecFilter(vf, *hwCodec, mvf, true)
+		
+		switch *hwCodec {
+		case ffmpeg.VideoCodecN264, ffmpeg.VideoCodecN264H, ffmpeg.VideoCodecNAv1:
+			vf = vf.Append("hwdownload,format=yuv420p")
+		default:
+			vf = vf.Append("hwdownload,format=nv12")
+		}
+		
+		vf = vf.Append(fmt.Sprintf("tile=%dx%d", gridSize, gridSize))
+	} else {
+		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(w, h)
+		vf = vf.Append(fmt.Sprintf("tile=%dx%d", gridSize, gridSize))
+	}
+
+	args = args.VideoFilter(vf)
+
+	if strings.HasSuffix(strings.ToLower(outputPath), ".jpg") || strings.HasSuffix(strings.ToLower(outputPath), ".jpeg") {
+		args = args.FixedQualityScaleVideo(2)
+	}
+
+	args = args.Output(outputPath)
+
+	lockCtx := g.LockManager.ReadLock(ctx, videoFile.Path)
+	defer lockCtx.Cancel()
+
+	return g.generateFile(lockCtx, g.ScenePaths, jpgPattern, outputPath, func(lCtx *fsutil.LockContext, tmpFn string) error {
+		runArgs := make(ffmpeg.Args, len(args))
+		copy(runArgs, args)
+		runArgs[len(runArgs)-1] = tmpFn
+		
+		return g.generate(lCtx, runArgs)
+	})
+}
+
+func (g Generator) GenerateSpriteImageFallback(ctx context.Context, videoFile *ffmpeg.VideoFile, chunkCount int, spriteSize int, isPortrait bool, slowSeek bool, outputPath string) error {
+	var images []image.Image
+	if !slowSeek {
+		stepSize := videoFile.VideoStreamDuration / float64(chunkCount)
+		for i := 0; i < chunkCount; i++ {
+			timeVal := float64(i) * stepSize
+			img, err := g.SpriteScreenshot(ctx, videoFile.Path, timeVal, spriteSize, isPortrait)
+			if err != nil {
+				return err
+			}
+			images = append(images, img)
+		}
+	} else {
+		stepFrame := float64(videoFile.FrameCount-1) / float64(chunkCount)
+		for i := 0; i < chunkCount; i++ {
+			frame := math.Round(float64(i) * stepFrame)
+			img, err := g.SpriteScreenshotSlow(ctx, videoFile.Path, int(frame), spriteSize)
+			if err != nil {
+				return err
+			}
+			images = append(images, img)
+		}
+	}
+
+	montage := g.CombineSpriteImages(images)
+	return imaging.Save(montage, outputPath)
 }
 
 // TODO - move all sprite generation code here
