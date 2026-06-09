@@ -30,6 +30,9 @@ var (
 	VideoCodecVVP9  = makeVideoCodec("VP9 VAAPI", "vp9_vaapi")
 	VideoCodecVVPX  = makeVideoCodec("VP8 VAAPI", "vp8_vaapi")
 	VideoCodecRK264 = makeVideoCodec("H264 Rockchip MPP (rkmpp)", "h264_rkmpp")
+	VideoCodecNAv1  = makeVideoCodec("AV1 NVENC", "av1_nvenc")
+	VideoCodecIAv1  = makeVideoCodec("AV1 Intel Quick Sync Video (QSV)", "av1_qsv")
+	VideoCodecVAv1  = makeVideoCodec("AV1 VAAPI", "av1_vaapi")
 )
 
 const minHeight int = 480
@@ -76,6 +79,9 @@ func (f *FFMpeg) initHWSupport(ctx context.Context) {
 		VideoCodecIVP9,
 		VideoCodecVVP9,
 		VideoCodecM264,
+		VideoCodecNAv1,
+		VideoCodecIAv1,
+		VideoCodecVAv1,
 	} {
 		var args Args
 		args = append(args, "-hide_banner")
@@ -189,11 +195,21 @@ func (f *FFMpeg) hwDeviceInit(args Args, toCodec VideoCodec, fullhw bool) Args {
 	driDevice := os.Getenv("STASH_HW_DRI_DEVICE")
 	if driDevice == "" {
 		driDevice = "/dev/dri/renderD128"
+		if files, err := os.ReadDir("/dev/dri"); err == nil {
+			for _, file := range files {
+				name := file.Name()
+				if strings.HasPrefix(name, "renderD") {
+					driDevice = "/dev/dri/" + name
+					break
+				}
+			}
+		}
 	}
 
 	switch toCodec {
 	case VideoCodecN264,
-		VideoCodecN264H:
+		VideoCodecN264H,
+		VideoCodecNAv1:
 		args = append(args, "-hwaccel_device")
 		args = append(args, "0")
 		if fullhw {
@@ -205,7 +221,8 @@ func (f *FFMpeg) hwDeviceInit(args Args, toCodec VideoCodec, fullhw bool) Args {
 			args = append(args, "cuda")
 		}
 	case VideoCodecV264,
-		VideoCodecVVP9:
+		VideoCodecVVP9,
+		VideoCodecVAv1:
 		args = append(args, "-vaapi_device")
 		args = append(args, driDevice)
 		if fullhw {
@@ -216,7 +233,8 @@ func (f *FFMpeg) hwDeviceInit(args Args, toCodec VideoCodec, fullhw bool) Args {
 		}
 	case VideoCodecI264,
 		VideoCodecI264C,
-		VideoCodecIVP9:
+		VideoCodecIVP9,
+		VideoCodecIAv1:
 		if fullhw {
 			args = append(args, "-hwaccel")
 			args = append(args, "qsv")
@@ -261,19 +279,21 @@ func (f *FFMpeg) hwFilterInit(toCodec VideoCodec, fullhw bool) VideoFilter {
 	var videoFilter VideoFilter
 	switch toCodec {
 	case VideoCodecV264,
-		VideoCodecVVP9:
+		VideoCodecVVP9,
+		VideoCodecVAv1:
 		if !fullhw {
 			videoFilter = videoFilter.Append("format=nv12")
 			videoFilter = videoFilter.Append("hwupload")
 		}
-	case VideoCodecN264, VideoCodecN264H:
+	case VideoCodecN264, VideoCodecN264H, VideoCodecNAv1:
 		if !fullhw {
 			videoFilter = videoFilter.Append("format=nv12")
 			videoFilter = videoFilter.Append("hwupload_cuda")
 		}
 	case VideoCodecI264,
 		VideoCodecI264C,
-		VideoCodecIVP9:
+		VideoCodecIVP9,
+		VideoCodecIAv1:
 		if !fullhw {
 			videoFilter = videoFilter.Append("hwupload=extra_hw_frames=64")
 			videoFilter = videoFilter.Append("format=qsv")
@@ -356,15 +376,15 @@ func (f *FFMpeg) hwCodecFilter(args VideoFilter, codec VideoCodec, vf *models.Vi
 // Apply format switching if applicable
 func (f *FFMpeg) hwApplyFullHWFilter(args VideoFilter, codec VideoCodec, fullhw bool) VideoFilter {
 	switch codec {
-	case VideoCodecN264, VideoCodecN264H:
+	case VideoCodecN264, VideoCodecN264H, VideoCodecNAv1:
 		if fullhw && f.version.Gteq(Version{major: 5}) { // Added in FFMpeg 5
 			args = args.Append("scale_cuda=format=yuv420p")
 		}
-	case VideoCodecV264, VideoCodecVVP9:
+	case VideoCodecV264, VideoCodecVVP9, VideoCodecVAv1:
 		if fullhw && f.version.Gteq(Version{major: 3, minor: 1}) { // Added in FFMpeg 3.1
 			args = args.Append("scale_vaapi=format=nv12")
 		}
-	case VideoCodecI264, VideoCodecI264C, VideoCodecIVP9:
+	case VideoCodecI264, VideoCodecI264C, VideoCodecIVP9, VideoCodecIAv1:
 		if fullhw && f.version.Gteq(Version{major: 3, minor: 3}) { // Added in FFMpeg 3.3
 			args = args.Append("scale_qsv=format=nv12")
 		}
@@ -384,17 +404,17 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 	var template string
 
 	switch codec {
-	case VideoCodecN264, VideoCodecN264H:
+	case VideoCodecN264, VideoCodecN264H, VideoCodecNAv1:
 		template = "scale_cuda=$value"
 		if fullhw && f.version.Gteq(Version{major: 5}) { // Added in FFMpeg 5
 			template += ":format=yuv420p"
 		}
-	case VideoCodecV264, VideoCodecVVP9:
+	case VideoCodecV264, VideoCodecVVP9, VideoCodecVAv1:
 		template = "scale_vaapi=$value"
 		if fullhw && f.version.Gteq(Version{major: 3, minor: 1}) { // Added in FFMpeg 3.1
 			template += ":format=nv12"
 		}
-	case VideoCodecI264, VideoCodecI264C, VideoCodecIVP9:
+	case VideoCodecI264, VideoCodecI264C, VideoCodecIVP9, VideoCodecIAv1:
 		template = "scale_qsv=$value"
 		if fullhw && f.version.Gteq(Version{major: 3, minor: 3}) { // Added in FFMpeg 3.3
 			template += ":format=nv12"
@@ -414,7 +434,7 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 	}
 
 	// BUG: [scale_qsv]: Size values less than -1 are not acceptable.
-	isIntel := codec == VideoCodecI264 || codec == VideoCodecI264C || codec == VideoCodecIVP9
+	isIntel := codec == VideoCodecI264 || codec == VideoCodecI264C || codec == VideoCodecIVP9 || codec == VideoCodecIAv1
 	// BUG: scale_vt doesn't call ff_scale_adjust_dimensions, thus cant accept negative size values
 	isApple := codec == VideoCodecM264
 	// Rockchip's scale_rkrga supports -1/-2; don't apply minus-one hack here.
@@ -424,7 +444,10 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 // Returns the max resolution for a given codec, or a default
 func (f *FFMpeg) hwCodecMaxRes(codec VideoCodec) (int, int) {
 	switch codec {
-	case VideoCodecRK264:
+	case VideoCodecRK264,
+		VideoCodecNAv1,
+		VideoCodecIAv1,
+		VideoCodecVAv1:
 		return 8192, 8192
 	case VideoCodecN264,
 		VideoCodecN264H,
@@ -474,6 +497,7 @@ func (f *FFMpeg) hwCodecMP4Compatible() *VideoCodec {
 			VideoCodecI264,
 			VideoCodecI264C,
 			VideoCodecM264,
+			VideoCodecV264,
 			VideoCodecRK264:
 			return &element
 		}
@@ -486,7 +510,10 @@ func (f *FFMpeg) hwCodecWEBMCompatible() *VideoCodec {
 	for _, element := range f.getHWCodecSupport() {
 		switch element {
 		case VideoCodecIVP9,
-			VideoCodecVVP9:
+			VideoCodecVVP9,
+			VideoCodecNAv1,
+			VideoCodecIAv1,
+			VideoCodecVAv1:
 			return &element
 		}
 	}
