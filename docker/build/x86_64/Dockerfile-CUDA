@@ -40,7 +40,7 @@ RUN make flags-release flags-pie stash
 FROM nvidia/cuda:${CUDA_VERSION}-base-ubuntu24.04
 RUN apt update && apt upgrade -y && apt install -y \
     # stash dependencies
-    ca-certificates libvips-tools ffmpeg \
+    ca-certificates libvips-tools ffmpeg gosu \
     # intel dependencies
     intel-media-va-driver-non-free vainfo \
     # python tools
@@ -49,6 +49,8 @@ RUN apt update && apt upgrade -y && apt install -y \
   apt autoremove -y && apt clean && \
   rm -rf /var/lib/apt/lists/*
 COPY --from=backend --chmod=555 /stash/stash /usr/bin/
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # NVENC Patch
 RUN mkdir -p /usr/local/bin /patched-lib
@@ -58,8 +60,8 @@ ADD --chmod=555 https://raw.githubusercontent.com/keylase/nvidia-patch/master/do
 ENV LANG=C.UTF-8
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=video,utility
-ENV STASH_CONFIG_FILE=/root/.stash/config.yml
+ENV STASH_CONFIG_FILE=/config/config.yml
 EXPOSE 9999
-ENTRYPOINT ["docker-entrypoint.sh", "stash"]
+ENTRYPOINT ["docker-entrypoint.sh", "/entrypoint.sh", "stash"]
 
 # vim: ft=dockerfile

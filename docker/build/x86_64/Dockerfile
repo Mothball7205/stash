@@ -37,8 +37,10 @@ RUN make flags-release flags-pie stash
 
 # Final Runnable Image
 FROM alpine:latest
-RUN apk add --no-cache ca-certificates vips-tools ffmpeg
+RUN apk add --no-cache ca-certificates vips-tools ffmpeg shadow su-exec python3 py3-pip
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 COPY --from=backend /stash/stash /usr/bin/
-ENV STASH_CONFIG_FILE=/root/.stash/config.yml
+ENV STASH_CONFIG_FILE=/config/config.yml
 EXPOSE 9999
-ENTRYPOINT ["stash"]
+ENTRYPOINT ["/entrypoint.sh", "stash"]
