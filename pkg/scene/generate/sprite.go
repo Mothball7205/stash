@@ -180,7 +180,7 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 
 	var hwCodec *ffmpeg.VideoCodec
 	if g.FFMpegConfig.GetTranscodeHardwareAcceleration() {
-		hwCodec = g.Encoder.hwCodecMP4Compatible()
+		hwCodec = g.Encoder.HWCodecMP4Compatible()
 	}
 
 	var w, h int
@@ -195,14 +195,16 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 	useHW := false
 	if hwCodec != nil {
 		mvf := &models.VideoFile{
-			Path:     videoFile.Path,
+			BaseFile: &models.BaseFile{
+				Path:     videoFile.Path,
+				Basename: filepath.Base(videoFile.Path),
+			},
 			Width:    videoFile.Width,
 			Height:   videoFile.Height,
-			Basename: filepath.Base(videoFile.Path),
 		}
-		if g.Encoder.hwCanFullHWTranscode(ctx, *hwCodec, mvf, spriteSize) {
+		if g.Encoder.HWCanFullHWTranscode(ctx, *hwCodec, mvf, spriteSize) {
 			useHW = true
-			args = g.Encoder.hwDeviceInit(args, *hwCodec, true)
+			args = g.Encoder.HWDeviceInit(args, *hwCodec, true)
 		}
 	}
 
@@ -214,12 +216,14 @@ func (g Generator) generateSpriteImageSingleProcess(ctx context.Context, videoFi
 	if useHW {
 		vf = ffmpeg.VideoFilter(fmt.Sprintf("select='%s'", selectExpr)).ScaleDimensions(w, h)
 		mvf := &models.VideoFile{
-			Path:     videoFile.Path,
+			BaseFile: &models.BaseFile{
+				Path:     videoFile.Path,
+				Basename: filepath.Base(videoFile.Path),
+			},
 			Width:    videoFile.Width,
 			Height:   videoFile.Height,
-			Basename: filepath.Base(videoFile.Path),
 		}
-		vf = g.Encoder.hwCodecFilter(vf, *hwCodec, mvf, true)
+		vf = g.Encoder.HWCodecFilter(vf, *hwCodec, mvf, true)
 		
 		switch *hwCodec {
 		case ffmpeg.VideoCodecN264, ffmpeg.VideoCodecN264H, ffmpeg.VideoCodecNAv1:

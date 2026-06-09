@@ -13,6 +13,7 @@ import (
 	"github.com/stashapp/stash/pkg/ffmpeg/transcoder"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
+	"github.com/stashapp/stash/pkg/models"
 )
 
 const (
@@ -175,18 +176,20 @@ type previewChunkOptions struct {
 func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, width int, height int, options previewChunkOptions, fallback bool, useVsync2 bool) error {
 	codec := ffmpeg.VideoCodecLibX264
 	if g.FFMpegConfig.GetTranscodeHardwareAcceleration() {
-		if hwcodec := g.Encoder.hwCodecMP4Compatible(); hwcodec != nil {
+		if hwcodec := g.Encoder.HWCodecMP4Compatible(); hwcodec != nil {
 			codec = *hwcodec
 		}
 	}
 
 	videoFile := &models.VideoFile{
-		Path:   fn,
+		BaseFile: &models.BaseFile{
+			Path: fn,
+		},
 		Width:  width,
 		Height: height,
 	}
 
-	fullhw := g.FFMpegConfig.GetTranscodeHardwareAcceleration() && g.Encoder.hwCanFullHWTranscode(lockCtx.Context, codec, videoFile, scenePreviewWidth)
+	fullhw := g.FFMpegConfig.GetTranscodeHardwareAcceleration() && g.Encoder.HWCanFullHWTranscode(lockCtx.Context, codec, videoFile, scenePreviewWidth)
 
 	var videoFilter ffmpeg.VideoFilter
 	var videoArgs ffmpeg.Args
@@ -206,7 +209,7 @@ func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, wid
 		)
 	} else {
 		// Hardware path
-		videoFilter = g.Encoder.hwMaxResFilter(codec, videoFile, scenePreviewWidth, fullhw)
+		videoFilter = g.Encoder.HWMaxResFilter(codec, videoFile, scenePreviewWidth, fullhw)
 		videoArgs = ffmpeg.CodecInit(codec)
 		videoArgs = videoArgs.VideoFilter(videoFilter)
 	}
@@ -232,7 +235,7 @@ func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, wid
 
 	// Prepend hardware initialization arguments if hardware transcoding is used
 	var hwInputArgs ffmpeg.Args
-	hwInputArgs = g.Encoder.hwDeviceInit(hwInputArgs, codec, fullhw)
+	hwInputArgs = g.Encoder.HWDeviceInit(hwInputArgs, codec, fullhw)
 	trimOptions.ExtraInputArgs = append(hwInputArgs, trimOptions.ExtraInputArgs...)
 
 	if options.Audio {
