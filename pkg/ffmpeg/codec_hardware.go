@@ -519,3 +519,31 @@ func (f *FFMpeg) hwCodecWEBMCompatible() *VideoCodec {
 	}
 	return nil
 }
+
+func (f *FFMpeg) HWCodecMP4Compatible() *VideoCodec {
+	return f.hwCodecMP4Compatible()
+}
+
+func (f *FFMpeg) HWCodecWEBMCompatible() *VideoCodec {
+	return f.hwCodecWEBMCompatible()
+}
+
+func (f *FFMpeg) HWCodecHLSCompatible() *VideoCodec {
+	return f.hwCodecHLSCompatible()
+}
+
+func (f *FFMpeg) HWCanFullHWTranscode(ctx context.Context, codec VideoCodec, vf *models.VideoFile, reqHeight int) bool {
+	return f.hwCanFullHWTranscode(ctx, codec, vf, reqHeight)
+}
+
+func (f *FFMpeg) HWDeviceInit(args Args, toCodec VideoCodec, fullhw bool) Args {
+	return f.hwDeviceInit(args, toCodec, fullhw)
+}
+
+func (f *FFMpeg) HWCodecFilter(args VideoFilter, codec VideoCodec, vf *models.VideoFile, fullhw bool) VideoFilter {
+	return f.hwCodecFilter(args, codec, vf, fullhw)
+}
+
+func (f *FFMpeg) HWMaxResFilter(toCodec VideoCodec, vf *models.VideoFile, reqHeight int, fullhw bool) VideoFilter {
+	return f.hwMaxResFilter(toCodec, vf, reqHeight, fullhw)
+}
