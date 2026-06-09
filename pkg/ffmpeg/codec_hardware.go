@@ -437,8 +437,10 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 	isIntel := codec == VideoCodecI264 || codec == VideoCodecI264C || codec == VideoCodecIVP9 || codec == VideoCodecIAv1
 	// BUG: scale_vt doesn't call ff_scale_adjust_dimensions, thus cant accept negative size values
 	isApple := codec == VideoCodecM264
+	// BUG: [scale_vaapi]: Cannot allocate memory when dynamic aspect-ratio scaling (e.g. -2) is passed
+	isVAAPI := codec == VideoCodecV264 || codec == VideoCodecVVP9 || codec == VideoCodecVVPX || codec == VideoCodecVAv1
 	// Rockchip's scale_rkrga supports -1/-2; don't apply minus-one hack here.
-	return VideoFilter(templateReplaceScale(sargs, template, match, vf, isIntel || isApple))
+	return VideoFilter(templateReplaceScale(sargs, template, match, vf, isIntel || isApple || isVAAPI))
 }
 
 // Returns the max resolution for a given codec, or a default
