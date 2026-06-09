@@ -4,10 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"image"
 	"math"
-
-	"github.com/disintegration/imaging"
 
 	"github.com/stashapp/stash/pkg/ffmpeg"
 	"github.com/stashapp/stash/pkg/fsutil"
