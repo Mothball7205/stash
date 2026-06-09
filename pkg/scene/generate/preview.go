@@ -68,7 +68,7 @@ func (g PreviewOptions) getStepSizeAndOffset(videoDuration float64) (stepSize fl
 	return
 }
 
-func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration float64, hash string, options PreviewOptions, fallback bool, useVsync2 bool) error {
+func (g Generator) PreviewVideo(ctx context.Context, input string, width int, height int, videoDuration float64, hash string, options PreviewOptions, fallback bool, useVsync2 bool) error {
 	lockCtx := g.LockManager.ReadLock(ctx, input)
 	defer lockCtx.Cancel()
 
@@ -81,7 +81,7 @@ func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration
 
 	logger.Infof("[generator] generating video preview for %s", input)
 
-	if err := g.generateFile(lockCtx, g.ScenePaths, mp4Pattern, output, g.previewVideo(input, videoDuration, options, fallback, useVsync2)); err != nil {
+	if err := g.generateFile(lockCtx, g.ScenePaths, mp4Pattern, output, g.previewVideo(input, width, height, videoDuration, options, fallback, useVsync2)); err != nil {
 		return err
 	}
 
@@ -90,10 +90,10 @@ func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration
 	return nil
 }
 
-func (g *Generator) previewVideo(input string, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
+func (g *Generator) previewVideo(input string, width int, height int, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
 	// #2496 - generate a single preview video for videos shorter than segments * segment duration
 	if videoDuration < options.SegmentDuration*float64(options.Segments) {
-		return g.previewVideoSingle(input, videoDuration, options, fallback, useVsync2)
+		return g.previewVideoSingle(input, width, height, videoDuration, options, fallback, useVsync2)
 	}
 
 	return func(lockCtx *fsutil.LockContext, tmpFn string) error {
@@ -131,7 +131,7 @@ func (g *Generator) previewVideo(input string, videoDuration float64, options Pr
 				Preset:     options.Preset,
 			}
 
-			if err := g.previewVideoChunk(lockCtx, input, chunkOptions, fallback, useVsync2); err != nil {
+			if err := g.previewVideoChunk(lockCtx, input, width, height, chunkOptions, fallback, useVsync2); err != nil {
 				return err
 			}
 		}
@@ -150,7 +150,7 @@ func (g *Generator) previewVideo(input string, videoDuration float64, options Pr
 	}
 }
 
-func (g *Generator) previewVideoSingle(input string, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
+func (g *Generator) previewVideoSingle(input string, width int, height int, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
 	return func(lockCtx *fsutil.LockContext, tmpFn string) error {
 		chunkOptions := previewChunkOptions{
 			StartTime:  0,
@@ -160,7 +160,7 @@ func (g *Generator) previewVideoSingle(input string, videoDuration float64, opti
 			Preset:     options.Preset,
 		}
 
-		return g.previewVideoChunk(lockCtx, input, chunkOptions, fallback, useVsync2)
+		return g.previewVideoChunk(lockCtx, input, width, height, chunkOptions, fallback, useVsync2)
 	}
 }
 
@@ -172,22 +172,44 @@ type previewChunkOptions struct {
 	Preset     string
 }
 
-func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, options previewChunkOptions, fallback bool, useVsync2 bool) error {
+func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, width int, height int, options previewChunkOptions, fallback bool, useVsync2 bool) error {
+	codec := ffmpeg.VideoCodecLibX264
+	if g.FFMpegConfig.GetTranscodeHardwareAcceleration() {
+		if hwcodec := g.Encoder.hwCodecMP4Compatible(); hwcodec != nil {
+			codec = *hwcodec
+		}
+	}
+
+	videoFile := &models.VideoFile{
+		Path:   fn,
+		Width:  width,
+		Height: height,
+	}
+
+	fullhw := g.FFMpegConfig.GetTranscodeHardwareAcceleration() && g.Encoder.hwCanFullHWTranscode(lockCtx.Context, codec, videoFile, scenePreviewWidth)
+
 	var videoFilter ffmpeg.VideoFilter
-	videoFilter = videoFilter.ScaleWidth(scenePreviewWidth)
-
 	var videoArgs ffmpeg.Args
-	videoArgs = videoArgs.VideoFilter(videoFilter)
 
-	videoArgs = append(videoArgs,
-		"-pix_fmt", "yuv420p",
-		"-profile:v", "high",
-		"-level", "4.2",
-		"-preset", options.Preset,
-		"-crf", "21",
-		"-threads", "4",
-		"-strict", "-2",
-	)
+	if codec == ffmpeg.VideoCodecLibX264 {
+		// Software path
+		videoFilter = videoFilter.ScaleWidth(scenePreviewWidth)
+		videoArgs = videoArgs.VideoFilter(videoFilter)
+		videoArgs = append(videoArgs,
+			"-pix_fmt", "yuv420p",
+			"-profile:v", "high",
+			"-level", "4.2",
+			"-preset", options.Preset,
+			"-crf", "21",
+			"-threads", "4",
+			"-strict", "-2",
+		)
+	} else {
+		// Hardware path
+		videoFilter = g.Encoder.hwMaxResFilter(codec, videoFile, scenePreviewWidth, fullhw)
+		videoArgs = ffmpeg.CodecInit(codec)
+		videoArgs = videoArgs.VideoFilter(videoFilter)
+	}
 
 	if useVsync2 {
 		videoArgs = append(videoArgs, "-vsync", "2")
@@ -201,12 +223,17 @@ func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, opt
 		XError:   !fallback,
 		SlowSeek: fallback,
 
-		VideoCodec: ffmpeg.VideoCodecLibX264,
+		VideoCodec: codec,
 		VideoArgs:  videoArgs,
 
 		ExtraInputArgs:  g.FFMpegConfig.GetTranscodeInputArgs(),
 		ExtraOutputArgs: g.FFMpegConfig.GetTranscodeOutputArgs(),
 	}
+
+	// Prepend hardware initialization arguments if hardware transcoding is used
+	var hwInputArgs ffmpeg.Args
+	hwInputArgs = g.Encoder.hwDeviceInit(hwInputArgs, codec, fullhw)
+	trimOptions.ExtraInputArgs = append(hwInputArgs, trimOptions.ExtraInputArgs...)
 
 	if options.Audio {
 		var audioArgs ffmpeg.Args
