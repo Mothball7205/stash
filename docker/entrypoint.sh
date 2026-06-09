@@ -61,11 +61,22 @@ if [ "$(id -u)" = "0" ] && [ "$PUID" -ne 0 ] && [ "$PGID" -ne 0 ]; then
         cp -rp /root/.stash/* /config/ 2>/dev/null || true
     fi
 
-    # Adjust config folder ownership
-    mkdir -p /config
+    # Adjust writeable mounts ownership if owned by root
     if [ "$SKIP_CHOWN" != "true" ]; then
-        echo "Updating ownership of /config to $PUID:$PGID..."
-        chown -R "$PUID:$PGID" /config
+        # /config is always chowned to ensure config files are writeable
+        mkdir -p /config
+        chown -R "$PUID:$PGID" /config || true
+
+        # Other mount points are only chowned if currently owned by root (0)
+        # to avoid extremely slow recursive chown calls on huge pre-existing libraries
+        for dir in /generated /metadata /cache /blobs; do
+            if [ -d "$dir" ]; then
+                if [ "$(stat -c '%u' "$dir" 2>/dev/null)" = "0" ]; then
+                    echo "Updating ownership of $dir to $PUID:$PGID..."
+                    chown -R "$PUID:$PGID" "$dir" || true
+                fi
+            fi
+        done
     fi
 
     # Install Python dependencies if requirements.txt exists
