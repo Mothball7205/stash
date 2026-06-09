@@ -283,7 +283,7 @@ func (f *FFMpeg) hwFilterInit(toCodec VideoCodec, fullhw bool) VideoFilter {
 		VideoCodecVAv1:
 		if !fullhw {
 			videoFilter = videoFilter.Append("format=nv12")
-			videoFilter = videoFilter.Append("hwupload")
+			videoFilter = videoFilter.Append("hwupload=extra_hw_frames=64")
 		}
 	case VideoCodecN264, VideoCodecN264H, VideoCodecNAv1:
 		if !fullhw {
