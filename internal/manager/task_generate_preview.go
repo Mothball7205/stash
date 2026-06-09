@@ -72,7 +72,8 @@ func (t *GeneratePreviewTask) generateVideo(videoChecksum string, videoDuration 
 	}
 
 	if err := t.generator.PreviewVideo(context.TODO(), videoFilename, width, height, videoDuration, videoChecksum, t.Options, false, useVsync2); err != nil {
-		logger.Warnf("[generator] failed generating scene preview, trying fallback")
+		logger.Infof("[generator] failed generating scene preview with fast seek, trying fallback")
+		logger.Debugf("[generator] fallback reason: %v", err)
 		if err := t.generator.PreviewVideo(context.TODO(), videoFilename, width, height, videoDuration, videoChecksum, t.Options, true, useVsync2); err != nil {
 			return err
 		}
