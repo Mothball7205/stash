@@ -212,8 +212,11 @@ func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, enc
 	err := g.previewVideoChunkEncode(lockCtx, fn, enc, options, fallback, useVsync2)
 
 	// hardware encoders can fail on files that decode fine in software -
-	// fall back to software encoding rather than failing the whole task
-	if err != nil && enc.codec != ffmpeg.VideoCodecLibX264 {
+	// fall back to software encoding rather than failing the whole task.
+	// only do this on the slow-seek pass: failures on the fast-seek pass are
+	// usually seek-related (wmv/avi - see transcoder.Transcode), which
+	// software encoding cannot fix and the slow-seek fallback handles
+	if err != nil && fallback && enc.codec != ffmpeg.VideoCodecLibX264 {
 		logger.Warnf("[generator] hardware encoded preview chunk failed, retrying with software encoding: %v", err)
 		swEnc := previewEncoderConfig{
 			codec:     ffmpeg.VideoCodecLibX264,
