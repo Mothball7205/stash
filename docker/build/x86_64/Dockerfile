@@ -64,4 +64,6 @@ ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 ENV PIP_TARGET=/config/.python-packages \
     PYTHONPATH=/config/.python-packages
 EXPOSE 9999
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
+    CMD ["python3", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('STASH_PORT', '9999') + '/healthz', timeout=5)"]
 ENTRYPOINT ["/entrypoint.sh", "stash"]

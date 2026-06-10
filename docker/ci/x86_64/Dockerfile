@@ -50,4 +50,6 @@ LABEL org.opencontainers.image.title="Stash" \
     org.opencontainers.image.licenses="AGPL-3.0"
 
 EXPOSE 9999
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s \
+    CMD ["python3", "-c", "import os, urllib.request; urllib.request.urlopen('http://127.0.0.1:' + os.environ.get('STASH_PORT', '9999') + '/healthz', timeout=5)"]
 ENTRYPOINT ["/entrypoint.sh", "stash"]
