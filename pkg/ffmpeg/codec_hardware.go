@@ -288,10 +288,11 @@ func (f *FFMpeg) hwFilterInit(toCodec VideoCodec, fullhw bool) VideoFilter {
 	case VideoCodecV264,
 		VideoCodecVVP9,
 		VideoCodecVAv1:
-		if !fullhw {
-			videoFilter = videoFilter.Append("format=nv12")
-			videoFilter = videoFilter.Append("hwupload=extra_hw_frames=16")
-		}
+		// Software decode path: scaling happens in software before upload,
+		// so the upload filter is appended after the scaler in hwApplyScaleTemplate.
+		// VAAPI supports dynamic frame pools, so hwupload must not set
+		// extra_hw_frames: a fixed pool at source resolution can fail with
+		// ENOMEM on large files (#5769).
 	case VideoCodecN264, VideoCodecN264H, VideoCodecNAv1:
 		if !fullhw {
 			videoFilter = videoFilter.Append("format=nv12")
@@ -302,7 +303,8 @@ func (f *FFMpeg) hwFilterInit(toCodec VideoCodec, fullhw bool) VideoFilter {
 		VideoCodecIVP9,
 		VideoCodecIAv1:
 		if !fullhw {
-			videoFilter = videoFilter.Append("hwupload=extra_hw_frames=16")
+			// QSV requires a fixed-size frame pool, so extra_hw_frames is mandatory here
+			videoFilter = videoFilter.Append("hwupload=extra_hw_frames=64")
 			videoFilter = videoFilter.Append("format=qsv")
 		}
 	case VideoCodecM264:
@@ -388,8 +390,11 @@ func (f *FFMpeg) hwApplyFullHWFilter(args VideoFilter, codec VideoCodec, fullhw 
 			args = args.Append("scale_cuda=format=yuv420p")
 		}
 	case VideoCodecV264, VideoCodecVVP9, VideoCodecVAv1:
-		if f.version.Gteq(Version{major: 3, minor: 1}) { // Added in FFMpeg 3.1
+		if fullhw && f.version.Gteq(Version{major: 3, minor: 1}) { // Added in FFMpeg 3.1
 			args = args.Append("scale_vaapi=format=nv12")
+		} else if !fullhw {
+			args = args.Append("format=nv12")
+			args = args.Append("hwupload")
 		}
 	case VideoCodecI264, VideoCodecI264C, VideoCodecIVP9, VideoCodecIAv1:
 		if fullhw && f.version.Gteq(Version{major: 3, minor: 3}) { // Added in FFMpeg 3.3
@@ -417,6 +422,11 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 			template += ":format=yuv420p"
 		}
 	case VideoCodecV264, VideoCodecVVP9, VideoCodecVAv1:
+		if !fullhw {
+			// Software decode path: keep the software scaler so frames are
+			// uploaded at output resolution rather than source resolution
+			return VideoFilter(sargs).Append("format=nv12").Append("hwupload")
+		}
 		template = "scale_vaapi=$value"
 		if f.version.Gteq(Version{major: 3, minor: 1}) { // Added in FFMpeg 3.1
 			template += ":format=nv12"
@@ -444,10 +454,8 @@ func (f *FFMpeg) hwApplyScaleTemplate(sargs string, codec VideoCodec, match []in
 	isIntel := codec == VideoCodecI264 || codec == VideoCodecI264C || codec == VideoCodecIVP9 || codec == VideoCodecIAv1
 	// BUG: scale_vt doesn't call ff_scale_adjust_dimensions, thus cant accept negative size values
 	isApple := codec == VideoCodecM264
-	// BUG: [scale_vaapi]: Cannot allocate memory when dynamic aspect-ratio scaling (e.g. -2) is passed
-	isVAAPI := codec == VideoCodecV264 || codec == VideoCodecVVP9 || codec == VideoCodecVVPX || codec == VideoCodecVAv1
 	// Rockchip's scale_rkrga supports -1/-2; don't apply minus-one hack here.
-	return VideoFilter(templateReplaceScale(sargs, template, match, vf, isIntel || isApple || isVAAPI))
+	return VideoFilter(templateReplaceScale(sargs, template, match, vf, isIntel || isApple))
 }
 
 // Returns the max resolution for a given codec, or a default
