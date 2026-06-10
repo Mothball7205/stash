@@ -1,6 +1,6 @@
 # Introduction
 
-This dockerfile is used to build a stash docker container using the current source code. This is ideal for testing your current branch in docker. Note that it does not include python, so python-based scrapers will not work in this image. The production docker images distributed by the project contain python and the necessary packages.
+This dockerfile is used to build a stash docker container using the current source code. This is ideal for testing your current branch in docker. The image is debian-based and includes ffmpeg with hardware acceleration support (VAAPI, QSV, NVENC) and python for python-based scrapers.
 
 # Building the docker container
 
@@ -29,7 +29,7 @@ docker run \
  -e STASH_METADATA=/metadata/ \
  -e STASH_CACHE=/cache/ \
  -e STASH_GENERATED=/generated/ \
- -v <path to config dir>:/root/.stash \
+ -v <path to config dir>:/config \
  -v <path to media>:/data \
  -v <path to metadata>:/metadata \
  -v <path to cache>:/cache \
@@ -57,7 +57,7 @@ docker run \
  -e STASH_METADATA=/metadata/ \
  -e STASH_CACHE=/cache/ \
  -e STASH_GENERATED=/generated/ \
- -v /stash/config:/root/.stash \
+ -v /stash/config:/config \
  -v /media:/data \
  -v /stash/metadata:/metadata \
  -v /stash/cache:/cache \

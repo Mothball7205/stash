@@ -18,8 +18,9 @@ ARG STASH_VERSION
 RUN BUILD_DATE=$(date +"%Y-%m-%d %H:%M:%S") make ui-only
 
 # Build Backend
-FROM golang:1.25.9-alpine AS backend
-RUN apk add --no-cache make alpine-sdk
+# debian-based builder: the binary is CGO and must link against glibc to run
+# in the debian runtime image below
+FROM golang:1.25.9-trixie AS backend
 WORKDIR /stash
 COPY ./go* ./*.go Makefile gqlgen.yml .gqlgenc.yml /stash/
 COPY ./graphql /stash/graphql/
@@ -36,11 +37,27 @@ ARG STASH_VERSION
 RUN make flags-release flags-pie stash
 
 # Final Runnable Image
-FROM alpine:latest
-RUN apk add --no-cache ca-certificates vips-tools ffmpeg shadow su-exec python3 py3-pip
+FROM debian:trixie-slim
+# Debian's ffmpeg is built with VAAPI, QSV (libvpl) and NVENC support.
+# - VAAPI/QSV need the va driver packages below (intel-media-va-driver-non-free
+#   requires the non-free component, hence the sources edit)
+# - NVENC needs no packages here: the NVIDIA container toolkit injects the
+#   driver libraries at runtime
+RUN sed -i 's/Components: main/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates tzdata gosu \
+        ffmpeg libva2 libva-drm2 vainfo mesa-va-drivers \
+        intel-media-va-driver-non-free i965-va-driver libvpl2 libmfx-gen1.2 \
+        libvips-tools \
+        python3 python3-pip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 COPY --from=backend /stash/stash /usr/bin/
 ENV STASH_CONFIG_FILE=/config/config.yml
+# include the video capability so NVENC works when run with --gpus
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
 EXPOSE 9999
 ENTRYPOINT ["/entrypoint.sh", "stash"]
