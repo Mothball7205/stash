@@ -14,14 +14,29 @@ migrate_legacy_config() {
     fi
 }
 
-# Install Python dependencies if requirements.txt exists
+# Install Python dependencies if requirements.txt exists.
+# Packages are installed into $PIP_TARGET (on the /config mount) so they
+# persist across image updates, and a checksum marker skips the reinstall
+# when requirements.txt hasn't changed since the last start.
 install_python_deps() {
     if [ -f /config/requirements.txt ]; then
+        PIP_TARGET=${PIP_TARGET:-/config/.python-packages}
+        export PIP_TARGET
+        marker="$PIP_TARGET/.requirements.sha256"
+        checksum=$(sha256sum /config/requirements.txt | cut -d' ' -f1)
+        if [ -f "$marker" ] && [ "$(cat "$marker")" = "$checksum" ]; then
+            return
+        fi
         echo "Installing Python dependencies from /config/requirements.txt..."
+        mkdir -p "$PIP_TARGET"
+        # --upgrade is needed for pip to replace files already in the target dir
         # --break-system-packages is required on debian (PEP 668) and ignored where unsupported
-        pip3 install --no-cache-dir --break-system-packages -r /config/requirements.txt 2>/dev/null \
-            || pip3 install --no-cache-dir -r /config/requirements.txt 2>/dev/null \
-            || true
+        if pip3 install --no-cache-dir --upgrade --break-system-packages -r /config/requirements.txt 2>/dev/null \
+            || pip3 install --no-cache-dir --upgrade -r /config/requirements.txt 2>/dev/null; then
+            echo "$checksum" > "$marker"
+        else
+            echo "Warning: failed to install Python dependencies from /config/requirements.txt"
+        fi
     fi
 }
 

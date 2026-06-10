@@ -59,5 +59,9 @@ COPY --from=backend /stash/stash /usr/bin/
 ENV STASH_CONFIG_FILE=/config/config.yml
 # include the video capability so NVENC works when run with --gpus
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+# runtime pip installs go to the /config mount so user-installed python
+# dependencies persist across image updates
+ENV PIP_TARGET=/config/.python-packages \
+    PYTHONPATH=/config/.python-packages
 EXPOSE 9999
 ENTRYPOINT ["/entrypoint.sh", "stash"]

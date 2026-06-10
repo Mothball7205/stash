@@ -36,6 +36,10 @@ RUN chmod +x /entrypoint.sh
 ENV STASH_CONFIG_FILE=/config/config.yml
 # include the video capability so NVENC works when run with --gpus
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+# runtime pip installs go to the /config mount so user-installed python
+# dependencies persist across image updates
+ENV PIP_TARGET=/config/.python-packages \
+    PYTHONPATH=/config/.python-packages
 
 # Basic build-time metadata as defined at https://github.com/opencontainers/image-spec/blob/main/annotations.md#pre-defined-annotation-keys
 LABEL org.opencontainers.image.title="Stash" \
