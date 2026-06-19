@@ -13,6 +13,7 @@ import (
 	"github.com/stashapp/stash/pkg/ffmpeg/transcoder"
 	"github.com/stashapp/stash/pkg/fsutil"
 	"github.com/stashapp/stash/pkg/logger"
+	"github.com/stashapp/stash/pkg/models"
 )
 
 const (
@@ -68,7 +69,40 @@ func (g PreviewOptions) getStepSizeAndOffset(videoDuration float64) (stepSize fl
 	return
 }
 
-func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration float64, hash string, options PreviewOptions, fallback bool, useVsync2 bool) error {
+// previewEncoderConfig is the encoder decision for a preview generation,
+// made once per file rather than per chunk.
+type previewEncoderConfig struct {
+	codec     ffmpeg.VideoCodec
+	fullhw    bool
+	videoFile *models.VideoFile
+}
+
+func (g Generator) previewEncoderConfig(ctx context.Context, input string, width int, height int) previewEncoderConfig {
+	codec := ffmpeg.VideoCodecLibX264
+	if g.FFMpegConfig.GetTranscodeHardwareAcceleration() {
+		if hwcodec := g.Encoder.HWCodecMP4Compatible(); hwcodec != nil {
+			codec = *hwcodec
+		}
+	}
+
+	videoFile := &models.VideoFile{
+		BaseFile: &models.BaseFile{
+			Path: input,
+		},
+		Width:  width,
+		Height: height,
+	}
+
+	fullhw := codec != ffmpeg.VideoCodecLibX264 && g.Encoder.HWCanFullHWTranscode(ctx, codec, videoFile, scenePreviewWidth)
+
+	return previewEncoderConfig{
+		codec:     codec,
+		fullhw:    fullhw,
+		videoFile: videoFile,
+	}
+}
+
+func (g Generator) PreviewVideo(ctx context.Context, input string, width int, height int, videoDuration float64, hash string, options PreviewOptions, fallback bool, useVsync2 bool) error {
 	lockCtx := g.LockManager.ReadLock(ctx, input)
 	defer lockCtx.Cancel()
 
@@ -81,7 +115,9 @@ func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration
 
 	logger.Infof("[generator] generating video preview for %s", input)
 
-	if err := g.generateFile(lockCtx, g.ScenePaths, mp4Pattern, output, g.previewVideo(input, videoDuration, options, fallback, useVsync2)); err != nil {
+	enc := g.previewEncoderConfig(lockCtx.Context, input, width, height)
+
+	if err := g.generateFile(lockCtx, g.ScenePaths, mp4Pattern, output, g.previewVideo(input, enc, videoDuration, options, fallback, useVsync2)); err != nil {
 		return err
 	}
 
@@ -90,10 +126,10 @@ func (g Generator) PreviewVideo(ctx context.Context, input string, videoDuration
 	return nil
 }
 
-func (g *Generator) previewVideo(input string, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
+func (g *Generator) previewVideo(input string, enc previewEncoderConfig, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
 	// #2496 - generate a single preview video for videos shorter than segments * segment duration
 	if videoDuration < options.SegmentDuration*float64(options.Segments) {
-		return g.previewVideoSingle(input, videoDuration, options, fallback, useVsync2)
+		return g.previewVideoSingle(input, enc, videoDuration, options, fallback, useVsync2)
 	}
 
 	return func(lockCtx *fsutil.LockContext, tmpFn string) error {
@@ -131,7 +167,7 @@ func (g *Generator) previewVideo(input string, videoDuration float64, options Pr
 				Preset:     options.Preset,
 			}
 
-			if err := g.previewVideoChunk(lockCtx, input, chunkOptions, fallback, useVsync2); err != nil {
+			if err := g.previewVideoChunk(lockCtx, input, enc, chunkOptions, fallback, useVsync2); err != nil {
 				return err
 			}
 		}
@@ -150,7 +186,7 @@ func (g *Generator) previewVideo(input string, videoDuration float64, options Pr
 	}
 }
 
-func (g *Generator) previewVideoSingle(input string, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
+func (g *Generator) previewVideoSingle(input string, enc previewEncoderConfig, videoDuration float64, options PreviewOptions, fallback bool, useVsync2 bool) generateFn {
 	return func(lockCtx *fsutil.LockContext, tmpFn string) error {
 		chunkOptions := previewChunkOptions{
 			StartTime:  0,
@@ -160,7 +196,7 @@ func (g *Generator) previewVideoSingle(input string, videoDuration float64, opti
 			Preset:     options.Preset,
 		}
 
-		return g.previewVideoChunk(lockCtx, input, chunkOptions, fallback, useVsync2)
+		return g.previewVideoChunk(lockCtx, input, enc, chunkOptions, fallback, useVsync2)
 	}
 }
 
@@ -172,26 +208,31 @@ type previewChunkOptions struct {
 	Preset     string
 }
 
-func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, options previewChunkOptions, fallback bool, useVsync2 bool) error {
-	var videoFilter ffmpeg.VideoFilter
-	videoFilter = videoFilter.ScaleWidth(scenePreviewWidth)
+func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, enc previewEncoderConfig, options previewChunkOptions, fallback bool, useVsync2 bool) error {
+	err := g.previewVideoChunkEncode(lockCtx, fn, enc, options, fallback, useVsync2)
 
-	var videoArgs ffmpeg.Args
-	videoArgs = videoArgs.VideoFilter(videoFilter)
-
-	videoArgs = append(videoArgs,
-		"-pix_fmt", "yuv420p",
-		"-profile:v", "high",
-		"-level", "4.2",
-		"-preset", options.Preset,
-		"-crf", "21",
-		"-threads", "4",
-		"-strict", "-2",
-	)
-
-	if useVsync2 {
-		videoArgs = append(videoArgs, "-vsync", "2")
+	// hardware encoders can fail on files that decode fine in software -
+	// fall back to software encoding rather than failing the whole task.
+	// only do this on the slow-seek pass: failures on the fast-seek pass are
+	// usually seek-related (wmv/avi - see transcoder.Transcode), which
+	// software encoding cannot fix and the slow-seek fallback handles
+	if err != nil && fallback && enc.codec != ffmpeg.VideoCodecLibX264 {
+		logger.Warnf("[generator] hardware encoded preview chunk failed, retrying with software encoding: %v", err)
+		swEnc := previewEncoderConfig{
+			codec:     ffmpeg.VideoCodecLibX264,
+			videoFile: enc.videoFile,
+		}
+		err = g.previewVideoChunkEncode(lockCtx, fn, swEnc, options, fallback, useVsync2)
 	}
+
+	return err
+}
+
+func (g Generator) previewVideoChunkEncode(lockCtx *fsutil.LockContext, fn string, enc previewEncoderConfig, options previewChunkOptions, fallback bool, useVsync2 bool) error {
+	codec := enc.codec
+
+	var videoFilter ffmpeg.VideoFilter
+	var videoArgs ffmpeg.Args
 
 	trimOptions := transcoder.TranscodeOptions{
 		OutputPath: options.OutputPath,
@@ -201,12 +242,41 @@ func (g Generator) previewVideoChunk(lockCtx *fsutil.LockContext, fn string, opt
 		XError:   !fallback,
 		SlowSeek: fallback,
 
-		VideoCodec: ffmpeg.VideoCodecLibX264,
-		VideoArgs:  videoArgs,
-
 		ExtraInputArgs:  g.FFMpegConfig.GetTranscodeInputArgs(),
 		ExtraOutputArgs: g.FFMpegConfig.GetTranscodeOutputArgs(),
 	}
+
+	if codec == ffmpeg.VideoCodecLibX264 {
+		// Software path
+		videoFilter = videoFilter.ScaleWidth(scenePreviewWidth)
+		videoArgs = videoArgs.VideoFilter(videoFilter)
+		videoArgs = append(videoArgs,
+			"-pix_fmt", "yuv420p",
+			"-profile:v", "high",
+			"-level", "4.2",
+			"-preset", options.Preset,
+			"-crf", "21",
+			"-threads", "4",
+			"-strict", "-2",
+		)
+		trimOptions.VideoCodec = codec
+	} else {
+		// Hardware path
+		// CodecInit emits -c:v, so VideoCodec is left unset to avoid duplicating it
+		videoFilter = g.Encoder.HWMaxResFilter(codec, enc.videoFile, scenePreviewWidth, enc.fullhw)
+		videoArgs = ffmpeg.CodecInit(codec)
+		videoArgs = videoArgs.VideoFilter(videoFilter)
+
+		var hwInputArgs ffmpeg.Args
+		hwInputArgs = g.Encoder.HWDeviceInit(hwInputArgs, codec, enc.fullhw)
+		trimOptions.ExtraInputArgs = append(hwInputArgs, trimOptions.ExtraInputArgs...)
+	}
+
+	if useVsync2 {
+		videoArgs = append(videoArgs, "-vsync", "2")
+	}
+
+	trimOptions.VideoArgs = videoArgs
 
 	if options.Audio {
 		var audioArgs ffmpeg.Args

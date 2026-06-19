@@ -42,7 +42,7 @@ func (t *GeneratePhashTask) Start(ctx context.Context) {
 	}
 
 	if !set {
-		generated, err := videophash.Generate(instance.FFMpeg, t.File)
+		generated, err := videophash.Generate(instance.FFMpeg, t.File, instance.Config.GetTranscodeHardwareAcceleration())
 		if err != nil {
 			logger.Errorf("Error generating phash for %q: %v", t.File.Path, err)
 			logErrorOutput(err)

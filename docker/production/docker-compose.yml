@@ -22,14 +22,18 @@ services:
       - STASH_CACHE=/cache/
       ## Adjust below to change default port (9999)
       - STASH_PORT=9999
+      ## PUID/PGID for rootless execution (optional)
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
     volumes:
       - /etc/localtime:/etc/localtime:ro
       ## Adjust below paths (the left part) to your liking.
-      ## E.g. you can change ./config:/root/.stash to ./stash:/root/.stash
+      ## E.g. you can change ./config:/config to ./stash:/config
       ## The left part is the path on your host, the right part is the path in the stash container.
 
       ## Keep configs, scrapers, and plugins here.
-      - ./config:/root/.stash
+      - ./config:/config
       ## Point this at your collection.
       ## The left side is where your collection is on your host, the right side is where it will be in stash.
       - ./data:/data
@@ -41,3 +45,14 @@ services:
       - ./blobs:/blobs
       ## Where to store generated content (screenshots,previews,transcodes,sprites)
       - ./generated:/generated
+    ## For Intel QuickSync / VAAPI hardware acceleration:
+    # devices:
+    #   - /dev/dri:/dev/dri
+    ## For NVIDIA GPU hardware acceleration:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video]
